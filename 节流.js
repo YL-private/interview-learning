@@ -1,3 +1,4 @@
+// 节流：在一定时间内，如果多次触发同一个事件，则只执行第一次
 function throttle(func, delay) {
   let timer = null
   return function(...args) {

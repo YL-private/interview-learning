@@ -1,3 +1,4 @@
+// 防抖：在一定时间内，如果多次触发同一个事件，则只执行最后一次
 function debounce(func, delay) {
   let timer = null
   return function(...args) {
