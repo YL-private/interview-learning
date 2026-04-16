@@ -1,0 +1,127 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>WebRTC 对接 Demo</title>
+  <style>
+    body { font-family: Arial, sans-serif; margin: 24px; }
+    .row { margin-bottom: 12px; }
+    video { width: 900px; max-width: 100%; background: #000; }
+    input { width: 680px; max-width: 100%; }
+    button { margin-left: 8px; }
+    pre { background: #f5f5f5; padding: 12px; white-space: pre-wrap; }
+  </style>
+</head>
+<body>
+  <h2>WebRTC 拉流 Demo</h2>
+  <p>示例使用 WebSocket 做信令，演示 how-to：offer/answer + ICE candidate。</p>
+
+  <div class="row">
+    <label for="signalUrl">信令地址：</label>
+    <input id="signalUrl" value="ws://127.0.0.1:8080/ws" />
+    <button id="startBtn">开始拉流</button>
+    <button id="stopBtn">停止</button>
+  </div>
+
+  <video id="video" controls autoplay muted playsinline></video>
+  <pre id="log"></pre>
+
+  <script>
+    const signalInput = document.getElementById("signalUrl");
+    const startBtn = document.getElementById("startBtn");
+    const stopBtn = document.getElementById("stopBtn");
+    const video = document.getElementById("video");
+    const logEl = document.getElementById("log");
+
+    let ws = null;
+    let pc = null;
+
+    function log(...args) {
+      const line = args.map(String).join(" ");
+      logEl.textContent += line + "\n";
+      console.log(...args);
+    }
+
+    function cleanup() {
+      if (ws) {
+        ws.close();
+        ws = null;
+      }
+      if (pc) {
+        pc.close();
+        pc = null;
+      }
+      video.srcObject = null;
+    }
+
+    async function start() {
+      cleanup();
+      logEl.textContent = "";
+
+      const signalUrl = signalInput.value.trim();
+      if (!signalUrl) return;
+
+      pc = new RTCPeerConnection({
+        iceServers: [{ urls: "stun:stun.l.google.com:19302" }],
+      });
+
+      pc.ontrack = (event) => {
+        if (event.streams && event.streams[0]) {
+          video.srcObject = event.streams[0];
+          log("收到远端媒体流");
+        }
+      };
+
+      pc.onicecandidate = (event) => {
+        if (!event.candidate || !ws) return;
+        ws.send(
+          JSON.stringify({
+            type: "candidate",
+            candidate: event.candidate,
+          })
+        );
+      };
+
+      ws = new WebSocket(signalUrl);
+      ws.onopen = async () => {
+        log("信令连接成功");
+        // 拉流场景：仅接收远端音视频，不采集本地设备。
+        const offer = await pc.createOffer({
+          offerToReceiveAudio: true,
+          offerToReceiveVideo: true,
+        });
+        await pc.setLocalDescription(offer);
+        ws.send(JSON.stringify({ type: "offer", sdp: offer.sdp }));
+      };
+
+      ws.onmessage = async (event) => {
+        const msg = JSON.parse(event.data);
+
+        if (msg.type === "answer") {
+          await pc.setRemoteDescription({
+            type: "answer",
+            sdp: msg.sdp,
+          });
+          log("已设置远端 answer");
+          return;
+        }
+
+        if (msg.type === "candidate" && msg.candidate) {
+          await pc.addIceCandidate(msg.candidate);
+          log("已添加远端 candidate");
+        }
+      };
+
+      ws.onerror = (e) => log("信令异常:", e.message || e.type);
+      ws.onclose = () => log("信令连接关闭");
+    }
+
+    startBtn.addEventListener("click", () => {
+      start().catch((err) => log("启动失败:", err));
+    });
+    stopBtn.addEventListener("click", cleanup);
+    window.addEventListener("beforeunload", cleanup);
+  </script>
+</body>
+</html>

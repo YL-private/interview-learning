@@ -1,0 +1,82 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>FLV(WebSocket) 对接 Demo</title>
+  <style>
+    body { font-family: Arial, sans-serif; margin: 24px; }
+    .row { margin-bottom: 12px; }
+    video { width: 900px; max-width: 100%; background: #000; }
+    input { width: 680px; max-width: 100%; }
+    button { margin-left: 8px; }
+  </style>
+</head>
+<body>
+  <h2>FLV + WebSocket 播放 Demo</h2>
+  <p>通过 flv.js 播放 ws/wss 的 FLV 直播流。</p>
+
+  <div class="row">
+    <label for="flvUrl">FLV WebSocket 地址：</label>
+    <input id="flvUrl" value="ws://127.0.0.1:7001/live/test.flv" />
+    <button id="playBtn">播放</button>
+    <button id="stopBtn">停止</button>
+  </div>
+
+  <video id="video" controls autoplay muted playsinline></video>
+
+  <script src="https://cdn.jsdelivr.net/npm/flv.js@latest/dist/flv.min.js"></script>
+  <script>
+    const video = document.getElementById("video");
+    const flvUrlInput = document.getElementById("flvUrl");
+    const playBtn = document.getElementById("playBtn");
+    const stopBtn = document.getElementById("stopBtn");
+    let flvPlayer = null;
+
+    function stopFlv() {
+      if (!flvPlayer) return;
+      flvPlayer.pause();
+      flvPlayer.unload();
+      flvPlayer.detachMediaElement();
+      flvPlayer.destroy();
+      flvPlayer = null;
+    }
+
+    function playFlvWs(url) {
+      stopFlv();
+
+      if (!window.flvjs || !flvjs.isSupported()) {
+        alert("当前浏览器不支持 flv.js");
+        return;
+      }
+
+      flvPlayer = flvjs.createPlayer(
+        {
+          type: "flv",
+          isLive: true,
+          url,
+        },
+        {
+          enableStashBuffer: false,
+          stashInitialSize: 128,
+        }
+      );
+
+      flvPlayer.attachMediaElement(video);
+      flvPlayer.load();
+      flvPlayer.play().catch(console.error);
+      flvPlayer.on(flvjs.Events.ERROR, (type, detail, info) => {
+        console.error("FLV error:", type, detail, info);
+      });
+    }
+
+    playBtn.addEventListener("click", () => {
+      const url = flvUrlInput.value.trim();
+      if (!url) return;
+      playFlvWs(url);
+    });
+    stopBtn.addEventListener("click", stopFlv);
+    window.addEventListener("beforeunload", stopFlv);
+  </script>
+</body>
+</html>
