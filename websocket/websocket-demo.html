@@ -1,0 +1,247 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>WebSocket 测试 Demo</title>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      margin: 24px;
+      max-width: 960px;
+    }
+    h1 {
+      margin-top: 0;
+    }
+    .row {
+      margin-bottom: 12px;
+    }
+    input[type="text"] {
+      width: 520px;
+      max-width: 100%;
+      padding: 6px;
+    }
+    button {
+      margin-right: 8px;
+      padding: 6px 12px;
+      cursor: pointer;
+    }
+    .status {
+      display: inline-block;
+      padding: 2px 10px;
+      border-radius: 999px;
+      font-size: 12px;
+      background: #eee;
+    }
+    .status.open {
+      background: #d9f7be;
+    }
+    .status.closed {
+      background: #ffd8bf;
+    }
+    pre {
+      background: #0b1020;
+      color: #d6deff;
+      padding: 12px;
+      border-radius: 10px;
+      min-height: 220px;
+      max-height: 420px;
+      overflow: auto;
+      white-space: pre-wrap;
+    }
+    .muted {
+      color: #666;
+      font-size: 13px;
+    }
+    label {
+      margin-right: 12px;
+    }
+  </style>
+</head>
+<body>
+  <h1>WebSocket 测试 Demo</h1>
+  <p class="muted">
+    先在本目录运行 <code>node websocket-server.js</code>，再点「连接」。也可改成公网 echo 地址做连通性测试。
+  </p>
+
+  <div class="row">
+    <label for="wsUrl">地址：</label>
+    <input id="wsUrl" type="text" value="ws://127.0.0.1:8080" />
+    <span id="status" class="status closed">未连接</span>
+  </div>
+
+  <div class="row">
+    <button id="connectBtn">连接</button>
+    <button id="disconnectBtn" disabled>断开</button>
+    <button id="clearBtn">清空日志</button>
+    <label><input id="heartbeatChk" type="checkbox" checked /> 心跳 (15s)</label>
+    <label><input id="reconnectChk" type="checkbox" /> 断线自动重连</label>
+  </div>
+
+  <div class="row">
+    <input id="msgInput" type="text" placeholder='发送 JSON，例如 {"type":"chat","text":"hello"}' />
+    <button id="sendBtn" disabled>发送</button>
+    <button id="pingBtn" disabled>发送 ping</button>
+  </div>
+
+  <pre id="log"></pre>
+
+  <script>
+    const wsUrlInput = document.getElementById("wsUrl");
+    const statusEl = document.getElementById("status");
+    const connectBtn = document.getElementById("connectBtn");
+    const disconnectBtn = document.getElementById("disconnectBtn");
+    const clearBtn = document.getElementById("clearBtn");
+    const sendBtn = document.getElementById("sendBtn");
+    const pingBtn = document.getElementById("pingBtn");
+    const msgInput = document.getElementById("msgInput");
+    const heartbeatChk = document.getElementById("heartbeatChk");
+    const reconnectChk = document.getElementById("reconnectChk");
+    const logEl = document.getElementById("log");
+
+    let ws = null;
+    let heartbeatTimer = null;
+    let reconnectTimer = null;
+    let manualClose = false;
+    let reconnectAttempts = 0;
+
+    function log(...args) {
+      const line = `[${new Date().toLocaleTimeString()}] ${args.map(String).join(" ")}`;
+      logEl.textContent += line + "\n";
+      logEl.scrollTop = logEl.scrollHeight;
+      console.log(...args);
+    }
+
+    function setStatus(open) {
+      statusEl.textContent = open ? "已连接" : "未连接";
+      statusEl.className = "status " + (open ? "open" : "closed");
+      connectBtn.disabled = open;
+      disconnectBtn.disabled = !open;
+      sendBtn.disabled = !open;
+      pingBtn.disabled = !open;
+    }
+
+    function stopHeartbeat() {
+      if (heartbeatTimer) {
+        clearInterval(heartbeatTimer);
+        heartbeatTimer = null;
+      }
+    }
+
+    function startHeartbeat() {
+      stopHeartbeat();
+      if (!heartbeatChk.checked || !ws) return;
+
+      heartbeatTimer = setInterval(() => {
+        if (!ws || ws.readyState !== WebSocket.OPEN) return;
+        const payload = { type: "ping", time: Date.now() };
+        ws.send(JSON.stringify(payload));
+        log("-> ping", JSON.stringify(payload));
+      }, 15000);
+    }
+
+    function clearReconnectTimer() {
+      if (reconnectTimer) {
+        clearTimeout(reconnectTimer);
+        reconnectTimer = null;
+      }
+    }
+
+    function scheduleReconnect() {
+      if (manualClose || !reconnectChk.checked) return;
+
+      reconnectAttempts += 1;
+      const delay = Math.min(1000 * reconnectAttempts, 10000);
+      log(`将在 ${delay}ms 后尝试第 ${reconnectAttempts} 次重连...`);
+      clearReconnectTimer();
+      reconnectTimer = setTimeout(connect, delay);
+    }
+
+    function connect() {
+      manualClose = false;
+      clearReconnectTimer();
+
+      const url = wsUrlInput.value.trim();
+      if (!url) {
+        log("请填写 WebSocket 地址");
+        return;
+      }
+
+      if (ws) {
+        ws.close();
+        ws = null;
+      }
+
+      log("正在连接:", url);
+      ws = new WebSocket(url);
+
+      ws.onopen = () => {
+        reconnectAttempts = 0;
+        setStatus(true);
+        log("连接成功");
+        startHeartbeat();
+      };
+
+      ws.onmessage = (event) => {
+        log("<-", event.data);
+      };
+
+      ws.onerror = () => {
+        log("连接错误");
+      };
+
+      ws.onclose = (event) => {
+        setStatus(false);
+        stopHeartbeat();
+        log(`连接关闭 code=${event.code} reason=${event.reason || "(无)"}`);
+        ws = null;
+        scheduleReconnect();
+      };
+    }
+
+    function disconnect() {
+      manualClose = true;
+      clearReconnectTimer();
+      stopHeartbeat();
+      if (ws) ws.close(1000, "manual close");
+    }
+
+    function sendText(text) {
+      if (!ws || ws.readyState !== WebSocket.OPEN) {
+        log("当前未连接，无法发送");
+        return;
+      }
+      ws.send(text);
+      log("->", text);
+    }
+
+    connectBtn.addEventListener("click", connect);
+    disconnectBtn.addEventListener("click", disconnect);
+    clearBtn.addEventListener("click", () => {
+      logEl.textContent = "";
+    });
+
+    sendBtn.addEventListener("click", () => {
+      const text = msgInput.value.trim();
+      if (!text) return;
+      sendText(text);
+    });
+
+    pingBtn.addEventListener("click", () => {
+      sendText(JSON.stringify({ type: "ping", time: Date.now() }));
+    });
+
+    msgInput.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") sendBtn.click();
+    });
+
+    heartbeatChk.addEventListener("change", () => {
+      if (ws && ws.readyState === WebSocket.OPEN) startHeartbeat();
+      else stopHeartbeat();
+    });
+
+    msgInput.value = JSON.stringify({ type: "chat", text: "hello websocket" });
+    setStatus(false);
+  </script>
+</body>
+</html>
